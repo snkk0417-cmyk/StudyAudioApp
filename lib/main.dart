@@ -48,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen>
   PlayerState _playerState = PlayerState.stopped;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
+  double _playbackRate = 1.0;
 
   // シーク中はスライダーの値を独立して保持する
   bool _isSeeking = false;
@@ -90,11 +91,17 @@ class _HomeScreenState extends State<HomeScreen>
     _player.onPlayerComplete.listen((_) {
       if (!mounted) return;
       setState(() {
-        _playerState = PlayerState.stopped;
         _position = Duration.zero;
         _seekValue = 0.0;
       });
     });
+
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    await _player.setReleaseMode(ReleaseMode.stop);
+    await _player.setSource(AssetSource(_currentAsset));
   }
 
   @override
@@ -111,8 +118,17 @@ class _HomeScreenState extends State<HomeScreen>
     if (_playerState == PlayerState.paused) {
       await _player.resume();
     } else {
+      if (_playerState == PlayerState.completed) {
+        await _player.seek(Duration.zero);
+      }
       await _player.play(AssetSource(_currentAsset));
     }
+    await _player.setPlaybackRate(_playbackRate);
+  }
+
+  Future<void> _changePlaybackRate(double rate) async {
+    setState(() => _playbackRate = rate);
+    await _player.setPlaybackRate(rate);
   }
 
   Future<void> _pause() async {
@@ -224,10 +240,53 @@ class _HomeScreenState extends State<HomeScreen>
           _buildSeekBar(context),
           const SizedBox(height: 20),
 
+          // 倍速
+          _buildSpeedControl(),
+          const SizedBox(height: 16),
+
           // 停止ボタン
           _buildStopButton(context),
         ],
       ),
+    );
+  }
+
+  Widget _buildSpeedControl() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '再生速度',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: CupertinoColors.secondaryLabel,
+          ),
+        ),
+        const SizedBox(height: 10),
+        CupertinoSlidingSegmentedControl<double>(
+          groupValue: _playbackRate,
+          children: {
+            1.0: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text('1.0x'),
+            ),
+            1.5: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text('1.5x'),
+            ),
+            2.0: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text('2.0x'),
+            ),
+          },
+          onValueChanged: (value) {
+            if (value != null) {
+              _changePlaybackRate(value);
+            }
+          },
+        ),
+      ],
     );
   }
 
