@@ -1,5 +1,5 @@
-import 'package:flutter/cupertino.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/cupertino.dart';
 
 void main() {
   runApp(const StudyAudioApp());
@@ -21,7 +21,7 @@ class StudyAudioApp extends StatelessWidget {
   }
 }
 
-// assets/audio/ 内のファイル一覧（追加したファイルをここに記述）
+// assets/audio/ 内の mp3 一覧（追加したファイルをここに記述）
 const List<String> _audioAssets = [
   'audio/Structure_Steel_Property.mp3',
 ];
@@ -44,7 +44,7 @@ class _HomeScreenState extends State<HomeScreen>
   final AudioPlayer _player = AudioPlayer();
   final TextEditingController _memoController = TextEditingController();
 
-  final String _currentAsset = _audioAssets.first;
+  String _currentAsset = _audioAssets.first;
   PlayerState _playerState = PlayerState.stopped;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
@@ -126,6 +126,24 @@ class _HomeScreenState extends State<HomeScreen>
     await _player.setPlaybackRate(_playbackRate);
   }
 
+  Future<void> _selectTrack(String asset) async {
+    if (_currentAsset == asset && _isPlaying) return;
+
+    await _player.stop();
+    setState(() {
+      _currentAsset = asset;
+      _position = Duration.zero;
+      _seekValue = 0.0;
+      _duration = Duration.zero;
+    });
+
+    await _player.setSource(AssetSource(asset));
+    await _player.play(AssetSource(asset));
+    await _player.setPlaybackRate(_playbackRate);
+
+    if (mounted) setState(() {});
+  }
+
   Future<void> _changePlaybackRate(double rate) async {
     setState(() => _playbackRate = rate);
     await _player.setPlaybackRate(rate);
@@ -186,20 +204,146 @@ class _HomeScreenState extends State<HomeScreen>
         border: Border(bottom: BorderSide(color: Color(0x00000000))),
       ),
       child: SafeArea(
-        child: GestureDetector(
-          onTap: () => FocusScope.of(context).unfocus(),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildPlayerCard(context),
-                const SizedBox(height: 20),
-                _buildMemoCard(context),
-              ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              child: _buildTrackList(context),
+            ),
+            Expanded(
+              child: GestureDetector(
+                onTap: () => FocusScope.of(context).unfocus(),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildPlayerCard(context),
+                      const SizedBox(height: 20),
+                      _buildMemoCard(context),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrackListItem(String asset) {
+    final isSelected = asset == _currentAsset;
+    final isPlayingThis = isSelected && _isPlaying;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _selectTrack(asset),
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 52),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        color: isSelected ? const Color(0xFFF0F6FF) : CupertinoColors.white,
+        child: Row(
+          children: [
+            Icon(
+              isPlayingThis
+                  ? CupertinoIcons.waveform
+                  : CupertinoIcons.music_note_2,
+              size: 22,
+              color: isSelected
+                  ? CupertinoColors.activeBlue
+                  : CupertinoColors.systemGrey,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _trackTitle(asset),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.w400,
+                      color: isSelected
+                          ? CupertinoColors.activeBlue
+                          : CupertinoColors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    asset,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: CupertinoColors.systemGrey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              isPlayingThis
+                  ? CupertinoIcons.speaker_2_fill
+                  : CupertinoIcons.play_fill,
+              size: 18,
+              color: isPlayingThis
+                  ? CupertinoColors.activeBlue
+                  : CupertinoColors.systemGrey3,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrackList(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: CupertinoColors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE5E5EA)),
+        boxShadow: [
+          BoxShadow(
+            color: CupertinoColors.systemGrey.withValues(alpha: 0.13),
+            blurRadius: 18,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Text(
+              '楽曲リスト',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: CupertinoColors.black,
+              ),
             ),
           ),
-        ),
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _audioAssets.length,
+            separatorBuilder: (context, index) => const Divider(
+              height: 1,
+              thickness: 0.5,
+              indent: 52,
+              color: Color(0xFFE5E5EA),
+            ),
+            itemBuilder: (context, index) {
+              return _buildTrackListItem(_audioAssets[index]);
+            },
+          ),
+        ],
       ),
     );
   }
