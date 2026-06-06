@@ -1,5 +1,6 @@
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 
 void main() {
   runApp(const StudyAudioApp());
@@ -21,16 +22,21 @@ class StudyAudioApp extends StatelessWidget {
   }
 }
 
-// assets/audio/ 内の mp3 一覧（追加したファイルをここに記述）
-const List<String> _audioAssets = [
-  'audio/Structure_Steel_Property.mp3',
-];
+const String _coreAudioAsset = 'audio/foundation_work/core.mp3';
 
-String _trackTitle(String assetPath) {
-  final name = assetPath.split('/').last;
-  final dot = name.lastIndexOf('.');
-  return dot > 0 ? name.substring(0, dot).replaceAll('_', ' ') : name;
-}
+const Map<String, String> _sectionLabels = {
+  'core': 'Core',
+  'practical': 'Practical',
+  'trap': 'Trap',
+  'exam': 'Exam',
+};
+
+const Map<String, String> _sectionTextPaths = {
+  'core': 'assets/text/foundation_work/core.txt',
+  'practical': 'assets/text/foundation_work/practical.txt',
+  'trap': 'assets/text/foundation_work/trap.txt',
+  'exam': 'assets/text/foundation_work/exam.txt',
+};
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -42,15 +48,18 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   final AudioPlayer _player = AudioPlayer();
-  final TextEditingController _memoController = TextEditingController();
 
-  String _currentAsset = _audioAssets.first;
+  String _selectedSection = 'core';
+  String? _currentText;
+  String? _textError;
+  bool _isLoadingText = true;
+  final Map<String, String> _textCache = {};
+
   PlayerState _playerState = PlayerState.stopped;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
   double _playbackRate = 1.0;
 
-  // シーク中はスライダーの値を独立して保持する
   bool _isSeeking = false;
   double _seekValue = 0.0;
 
@@ -97,22 +106,65 @@ class _HomeScreenState extends State<HomeScreen>
     });
 
     _initPlayer();
+    _loadSectionText(_selectedSection);
   }
 
   Future<void> _initPlayer() async {
     await _player.setReleaseMode(ReleaseMode.stop);
-    await _player.setSource(AssetSource(_currentAsset));
+    await _player.setSource(AssetSource(_coreAudioAsset));
+  }
+
+  Future<void> _loadSectionText(String section) async {
+    if (_textCache.containsKey(section)) {
+      setState(() {
+        _currentText = _textCache[section];
+        _isLoadingText = false;
+        _textError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingText = true;
+      _textError = null;
+    });
+
+    try {
+      final content =
+          await rootBundle.loadString(_sectionTextPaths[section]!);
+      _textCache[section] = content;
+      if (!mounted || _selectedSection != section) return;
+      setState(() {
+        _currentText = content;
+        _isLoadingText = false;
+      });
+    } catch (e) {
+      if (!mounted || _selectedSection != section) return;
+      setState(() {
+        _textError = 'テキストを読み込めませんでした。';
+        _isLoadingText = false;
+      });
+    }
+  }
+
+  Future<void> _selectSection(String section) async {
+    if (_selectedSection == section) return;
+
+    setState(() => _selectedSection = section);
+
+    if (section != 'core' && _isPlaying) {
+      await _pause();
+    }
+
+    await _loadSectionText(section);
   }
 
   @override
   void dispose() {
     _player.dispose();
-    _memoController.dispose();
     _pulseController.dispose();
     super.dispose();
   }
-
-  // ──────────────── 操作 ────────────────
 
   Future<void> _play() async {
     if (_playerState == PlayerState.paused) {
@@ -121,27 +173,9 @@ class _HomeScreenState extends State<HomeScreen>
       if (_playerState == PlayerState.completed) {
         await _player.seek(Duration.zero);
       }
-      await _player.play(AssetSource(_currentAsset));
+      await _player.play(AssetSource(_coreAudioAsset));
     }
     await _player.setPlaybackRate(_playbackRate);
-  }
-
-  Future<void> _selectTrack(String asset) async {
-    if (_currentAsset == asset && _isPlaying) return;
-
-    await _player.stop();
-    setState(() {
-      _currentAsset = asset;
-      _position = Duration.zero;
-      _seekValue = 0.0;
-      _duration = Duration.zero;
-    });
-
-    await _player.setSource(AssetSource(asset));
-    await _player.play(AssetSource(asset));
-    await _player.setPlaybackRate(_playbackRate);
-
-    if (mounted) setState(() {});
   }
 
   Future<void> _changePlaybackRate(double rate) async {
@@ -170,8 +204,6 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() => _position = target);
   }
 
-  // ──────────────── ヘルパー ────────────────
-
   bool get _isPlaying => _playerState == PlayerState.playing;
   bool get _isActive =>
       _playerState == PlayerState.playing ||
@@ -189,41 +221,64 @@ class _HomeScreenState extends State<HomeScreen>
     return '$m:$s';
   }
 
-  // ──────────────── ビルド ────────────────
-
   @override
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
       backgroundColor: const Color(0xFFF2F2F7),
-      navigationBar: const CupertinoNavigationBar(
-        middle: Text(
-          'Study Audio',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
-        backgroundColor: Color(0xFFF2F2F7),
-        border: Border(bottom: BorderSide(color: Color(0x00000000))),
-      ),
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-              child: _buildTrackList(context),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
+              child: Text(
+                'Foundation Work',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  color: CupertinoColors.label,
+                  letterSpacing: -0.5,
+                ),
+              ),
             ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: CupertinoSlidingSegmentedControl<String>(
+                groupValue: _selectedSection,
+                children: {
+                  for (final entry in _sectionLabels.entries)
+                    entry.key: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        entry.value,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                },
+                onValueChanged: (value) {
+                  if (value != null) {
+                    _selectSection(value);
+                  }
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
             Expanded(
-              child: GestureDetector(
-                onTap: () => FocusScope.of(context).unfocus(),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_selectedSection == 'core') ...[
                       _buildPlayerCard(context),
                       const SizedBox(height: 20),
-                      _buildMemoCard(context),
                     ],
-                  ),
+                    _buildTextCard(context),
+                  ],
                 ),
               ),
             ),
@@ -233,78 +288,13 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildTrackListItem(String asset) {
-    final isSelected = asset == _currentAsset;
-    final isPlayingThis = isSelected && _isPlaying;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _selectTrack(asset),
-      child: Container(
-        width: double.infinity,
-        constraints: const BoxConstraints(minHeight: 52),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        color: isSelected ? const Color(0xFFF0F6FF) : CupertinoColors.white,
-        child: Row(
-          children: [
-            Icon(
-              isPlayingThis
-                  ? CupertinoIcons.waveform
-                  : CupertinoIcons.music_note_2,
-              size: 22,
-              color: isSelected
-                  ? CupertinoColors.activeBlue
-                  : CupertinoColors.systemGrey,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _trackTitle(asset),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight:
-                          isSelected ? FontWeight.w600 : FontWeight.w400,
-                      color: isSelected
-                          ? CupertinoColors.activeBlue
-                          : CupertinoColors.black,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    asset,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: CupertinoColors.systemGrey,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              isPlayingThis
-                  ? CupertinoIcons.speaker_2_fill
-                  : CupertinoIcons.play_fill,
-              size: 18,
-              color: isPlayingThis
-                  ? CupertinoColors.activeBlue
-                  : CupertinoColors.systemGrey3,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTrackList(BuildContext context) {
+  Widget _buildTextCard(BuildContext context) {
     return Container(
       width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
       decoration: BoxDecoration(
         color: CupertinoColors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE5E5EA)),
         boxShadow: [
           BoxShadow(
             color: CupertinoColors.systemGrey.withValues(alpha: 0.13),
@@ -313,36 +303,43 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ],
       ),
-      clipBehavior: Clip.antiAlias,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
-            child: Text(
-              '楽曲リスト',
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                color: CupertinoColors.black,
+          Text(
+            _sectionLabels[_selectedSection] ?? '',
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: CupertinoColors.label,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_isLoadingText)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: CupertinoActivityIndicator(),
+              ),
+            )
+          else if (_textError != null)
+            Text(
+              _textError!,
+              style: const TextStyle(
+                fontSize: 15,
+                color: CupertinoColors.destructiveRed,
+                height: 1.6,
+              ),
+            )
+          else
+            Text(
+              _currentText ?? '',
+              style: const TextStyle(
+                fontSize: 15,
+                color: CupertinoColors.label,
+                height: 1.7,
               ),
             ),
-          ),
-          ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: _audioAssets.length,
-            separatorBuilder: (context, index) => const Divider(
-              height: 1,
-              thickness: 0.5,
-              indent: 52,
-              color: Color(0xFFE5E5EA),
-            ),
-            itemBuilder: (context, index) {
-              return _buildTrackListItem(_audioAssets[index]);
-            },
-          ),
         ],
       ),
     );
@@ -364,31 +361,22 @@ class _HomeScreenState extends State<HomeScreen>
       ),
       child: Column(
         children: [
-          // トラック名
-          Text(
-            _trackTitle(_currentAsset),
+          const Text(
+            'Core Audio',
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w600,
               color: CupertinoColors.label,
             ),
           ),
           const SizedBox(height: 32),
-
-          // 再生ボタン（中央・大）
           _buildMainPlayButton(),
           const SizedBox(height: 32),
-
-          // シークバー
           _buildSeekBar(context),
           const SizedBox(height: 20),
-
-          // 倍速
           _buildSpeedControl(),
           const SizedBox(height: 16),
-
-          // 停止ボタン
           _buildStopButton(context),
         ],
       ),
@@ -495,11 +483,15 @@ class _HomeScreenState extends State<HomeScreen>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(_fmt(_isSeeking
-                  ? Duration(
-                      milliseconds:
-                          (_seekValue * _duration.inMilliseconds).round())
-                  : _position), style: textStyle),
+              Text(
+                _fmt(_isSeeking
+                    ? Duration(
+                        milliseconds:
+                            (_seekValue * _duration.inMilliseconds).round(),
+                      )
+                    : _position),
+                style: textStyle,
+              ),
               Text(_fmt(_duration), style: textStyle),
             ],
           ),
@@ -548,89 +540,6 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildMemoCard(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: CupertinoColors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: CupertinoColors.systemGrey.withValues(alpha: 0.13),
-            blurRadius: 18,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-            child: Row(
-              children: [
-                const Icon(
-                  CupertinoIcons.pencil,
-                  size: 18,
-                  color: CupertinoColors.systemBlue,
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  'メモ',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: CupertinoColors.label,
-                  ),
-                ),
-                const Spacer(),
-                if (_memoController.text.isNotEmpty)
-                  CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    onPressed: () => setState(() => _memoController.clear()),
-                    child: const Text(
-                      '消去',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: CupertinoColors.destructiveRed,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: CupertinoTextField(
-              controller: _memoController,
-              placeholder: '気づいたことをメモしてください…',
-              maxLines: 8,
-              minLines: 5,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF9F9FB),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE5E5EA)),
-              ),
-              style: const TextStyle(
-                fontSize: 15,
-                color: CupertinoColors.label,
-                height: 1.5,
-              ),
-              placeholderStyle: TextStyle(
-                fontSize: 15,
-                color: CupertinoColors.placeholderText.resolveFrom(context),
-                height: 1.5,
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-          ),
-          const SizedBox(height: 4),
-        ],
       ),
     );
   }
