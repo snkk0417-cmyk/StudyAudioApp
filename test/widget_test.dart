@@ -6,6 +6,7 @@ void main() {
   testWidgets('StudyAudioApp renders home screen', (WidgetTester tester) async {
     await tester.pumpWidget(const StudyAudioApp());
 
-    expect(find.text('Foundation Work'), findsOneWidget);
+    expect(find.text('Study Audio'), findsOneWidget);
+    expect(find.text('Architecture'), findsOneWidget);
   });
 }

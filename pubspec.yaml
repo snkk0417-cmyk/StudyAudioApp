@@ -57,8 +57,30 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/audio/foundation_work/
-    - assets/text/foundation_work/
+    - assets/audio/architecture/educational_facilities/
+    - assets/audio/architecture/elderly_and_medical_facilities/
+    - assets/audio/architecture/library_museum_sports/
+    - assets/audio/architecture/urban_planning/
+    - assets/audio/construction/earthwork_and_shoring/
+    - assets/audio/construction/foundation_and_piling/
+    - assets/audio/construction/foundation_work/
+    - assets/audio/construction/temporary_work/
+    - assets/audio/sturucture/buckling_and_beam_deflection/
+    - assets/audio/sturucture/column_base_and_seismic_design/
+    - assets/audio/sturucture/steel_connection/
+    - assets/audio/sturucture/steel_material_properties/
+    - assets/text/architecture/educational_facilities/
+    - assets/text/architecture/elderly_and_medical_facilities/
+    - assets/text/architecture/library_museum_sports/
+    - assets/text/architecture/urban_planning/
+    - assets/text/construction/earthwork_and_shoring/
+    - assets/text/construction/foundation_and_piling/
+    - assets/text/construction/foundation_work/
+    - assets/text/construction/temporary_work/
+    - assets/text/structure/buckling_and_beam_deflection/
+    - assets/text/structure/column_base_and_seismic_design/
+    - assets/text/structure/steel_connection/
+    - assets/text/structure/steel_material_properties/
 
   # To add custom fonts to your application, add a fonts section here,
   # in this "flutter" section. Each entry in this list should have a
