@@ -4,6 +4,12 @@
 *.pyc
 *.swp
 .DS_Store
+
+# Secrets — TTS pipeline API keys (NEVER commit)
+.env
+**/.env
+*.mp3.partial
+__pycache__/
 .atom/
 .build/
 .buildlog/
