@@ -2,3 +2,9 @@
 # Install:  pip install -r requirements.txt
 openai>=1.40.0
 python-dotenv>=1.0.0
+# Optional: accurate mp3 duration in the progress log. Falls back to a
+# character-based estimate if not installed.
+mutagen>=1.47.0
+# Bundled ffmpeg binary, used to losslessly stitch multi-chunk audio (no system
+# install needed). Required when any script exceeds one chunk.
+imageio-ffmpeg>=0.5.1

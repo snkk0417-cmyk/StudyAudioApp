@@ -144,10 +144,10 @@ class _HomeScreenState extends State<HomeScreen>
     final savedTrackId = prefs.getString(_kTrackId);
     final savedPosMs = prefs.getInt(_kPositionMs) ?? 0;
 
-    _selectedSubject = (savedSubject != null && kSubjectTopics.containsKey(savedSubject))
+    _selectedSubject = (savedSubject != null && AssetCatalog.hasSubject(savedSubject))
         ? savedSubject
         : kSubjectOrder.first;
-    final topics = kSubjectTopics[_selectedSubject]!;
+    final topics = AssetCatalog.topicsFor(_selectedSubject);
     _selectedTopic =
         (savedTopic != null && topics.contains(savedTopic)) ? savedTopic : topics.first;
     _availableTypes = AssetCatalog.typesFor(_selectedSubject, _selectedTopic);
@@ -169,7 +169,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<PlaylistTrack> _buildTracks() {
     final tracks = <PlaylistTrack>[];
     for (final subject in subjectsForScope(_scope)) {
-      for (final topic in kSubjectTopics[subject]!) {
+      for (final topic in AssetCatalog.topicsFor(subject)) {
         for (final type in AssetCatalog.typesFor(subject, topic)) {
           if (studyModeIncludes(_mode, type)) {
             tracks.add(PlaylistTrack(subject, topic, type));
@@ -243,7 +243,7 @@ class _HomeScreenState extends State<HomeScreen>
       // Keep the browsed subject consistent with a single-subject scope.
       if (scope != 'all' && _selectedSubject != scope) {
         _selectedSubject = scope;
-        _selectedTopic = kSubjectTopics[scope]!.first;
+        _selectedTopic = AssetCatalog.topicsFor(scope).first;
         _availableTypes = AssetCatalog.typesFor(_selectedSubject, _selectedTopic);
         _selectedType = _firstTypeOrKeep();
       }
@@ -265,7 +265,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (_selectedSubject == subject) return;
     setState(() {
       _selectedSubject = subject;
-      _selectedTopic = kSubjectTopics[subject]!.first;
+      _selectedTopic = AssetCatalog.topicsFor(subject).first;
       _availableTypes = AssetCatalog.typesFor(_selectedSubject, _selectedTopic);
       _selectedType = _firstTypeOrKeep();
     });
@@ -489,7 +489,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    final topics = kSubjectTopics[_selectedSubject]!;
+    final topics = AssetCatalog.topicsFor(_selectedSubject);
 
     return CupertinoPageScaffold(
       backgroundColor: const Color(0xFFF2F2F7),

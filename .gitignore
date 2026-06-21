@@ -10,6 +10,15 @@
 **/.env
 *.mp3.partial
 __pycache__/
+
+# TTS run logs (progress.jsonl / failures.log)
+tools/tts/logs/
+
+# Heavy generated/source media — kept out of the repo to stay lightweight.
+# Source PDFs (1.1GB) and generated lecture audio (~600MB) are bundled into the
+# APK at build time from local disk; they are not needed in version control.
+assets/pdf/
+assets/audio/
 .atom/
 .build/
 .buildlog/

@@ -17,27 +17,10 @@ const Map<String, String> kSubjectLabels = {
   'structure': 'Structure',
 };
 
-// Declared topic lists. (Grows in Phase 4 as more PDFs are processed.)
-const Map<String, List<String>> kSubjectTopics = {
-  'architecture': [
-    'educational_facilities',
-    'elderly_and_medical_facilities',
-    'library_museum_sports',
-    'urban_planning',
-  ],
-  'construction': [
-    'earthwork_and_shoring',
-    'foundation_and_piling',
-    'foundation_work',
-    'temporary_work',
-  ],
-  'structure': [
-    'buckling_and_beam_deflection',
-    'column_base_and_seismic_design',
-    'steel_connection',
-    'steel_material_properties',
-  ],
-};
+// Topics are NOT hardcoded. They are discovered at runtime from the bundled
+// audio assets (see [AssetCatalog]); a topic exists for a subject when
+// assets/audio/<subject>/<topic>/deep.mp3 is bundled. Use
+// `AssetCatalog.topicsFor(subject)` / `AssetCatalog.hasSubject(subject)`.
 
 // ── Content types (flexible registry) ───────────────────────────────────────
 
@@ -147,6 +130,7 @@ class AssetCatalog {
   AssetCatalog._();
 
   static Set<String> _audio = <String>{};
+  static Map<String, List<String>> _topics = <String, List<String>>{};
   static bool _loaded = false;
 
   static Future<void> ensureLoaded() async {
@@ -160,8 +144,34 @@ class AssetCatalog {
     } catch (_) {
       _audio = <String>{};
     }
+    _topics = _discoverTopics(_audio);
     _loaded = true;
   }
+
+  /// Builds `{subject: [topics...]}` from bundled
+  /// `assets/audio/<subject>/<topic>/deep.mp3` paths. A topic is included only
+  /// when its deep lecture is present; topics are sorted for stable ordering.
+  static Map<String, List<String>> _discoverTopics(Set<String> audio) {
+    final bySubject = <String, List<String>>{};
+    for (final path in audio) {
+      // assets/audio/<subject>/<topic>/<type>.mp3
+      //   -> parts: [assets, audio, subject, topic, file]
+      final parts = path.split('/');
+      if (parts.length != 5 || parts[4] != 'deep.mp3') continue;
+      (bySubject[parts[2]] ??= <String>[]).add(parts[3]);
+    }
+    for (final list in bySubject.values) {
+      list.sort();
+    }
+    return bySubject;
+  }
+
+  /// Runtime-discovered topics for a subject, in stable sorted order.
+  static List<String> topicsFor(String subject) =>
+      _topics[subject] ?? const <String>[];
+
+  /// Whether any bundled topic exists for this subject.
+  static bool hasSubject(String subject) => _topics.containsKey(subject);
 
   /// Content types available for a topic, in registry order.
   static List<String> typesFor(String subject, String topic) => kContentTypeOrder

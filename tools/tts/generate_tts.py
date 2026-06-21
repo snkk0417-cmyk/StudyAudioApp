@@ -28,8 +28,14 @@ Run  python generate_tts.py --help  for all options.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Console output is UTF-8 — paths and scripts are Japanese, and the plan uses box
@@ -48,8 +54,19 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 TEXT_ROOT = REPO_ROOT / "assets" / "text"
 AUDIO_ROOT = REPO_ROOT / "assets" / "audio"
 
-# OpenAI hard limit on TTS input length, per request. We stay safely under it.
-MAX_CHARS_PER_REQUEST = 4000
+# Run records live here. progress.jsonl = one line per finished file (resume audit
+# trail); failures.log = one line per failed file, kept separate so a long run's
+# errors are easy to find. Both are gitignored and append-only.
+LOG_DIR = SCRIPT_DIR / "logs"
+PROGRESS_LOG = LOG_DIR / "progress.jsonl"
+FAILURE_LOG = LOG_DIR / "failures.log"
+
+# Per-request input cap. The gpt-4o-*-tts models limit input to 2000 TOKENS (not
+# characters). Japanese runs high — ~0.84 tokens/char observed — so a 2,955-char
+# script is ~2,468 tokens, over the limit. We chunk on a conservative CHARACTER
+# budget that stays under 2000 tokens even for dense kanji (~1.0 tok/char worst case):
+# 1,800 chars -> <=1,800 tokens. (tts-1/tts-1-hd allow 4096 chars; this is safe there too.)
+MAX_CHARS_PER_REQUEST = 1800
 
 # ---------------------------------------------------------------------------
 # Config loaded from .env (with built-in defaults).
@@ -72,11 +89,15 @@ def load_config() -> dict:
     return {
         "api_key": os.environ.get("OPENAI_API_KEY", "").strip(),
         "model": os.environ.get("TTS_MODEL", "gpt-4o-mini-tts").strip(),
-        "voice": os.environ.get("TTS_VOICE", "nova").strip(),
+        "voice": os.environ.get("TTS_VOICE", "shimmer").strip(),
         "format": os.environ.get("TTS_FORMAT", "mp3").strip(),
         "speed": float(os.environ.get("TTS_SPEED", "1.0") or "1.0"),
         "instructions": os.environ.get("TTS_INSTRUCTIONS", "").strip(),
         "price_per_1m": float(os.environ.get("TTS_PRICE_PER_1M_CHARS", "12.00") or "12.00"),
+        "max_retries": int(os.environ.get("TTS_MAX_RETRIES", "5") or "5"),
+        "retry_base_delay": float(os.environ.get("TTS_RETRY_BASE_DELAY", "2.0") or "2.0"),
+        # Throttle: seconds to wait before each API request (rate-limit safety).
+        "request_delay": float(os.environ.get("TTS_REQUEST_DELAY", "0") or "0"),
     }
 
 
@@ -264,11 +285,123 @@ def _split_keep(text: str, delimiters: tuple[str, ...]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Progress + failure logging (incremental, resume-friendly).
+# ---------------------------------------------------------------------------
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def log_success(text_file: Path, out: Path, info: dict) -> None:
+    """Append one JSON line per finished file — an audit trail for resumed runs."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": _now_iso(),
+        "script": str(text_file.relative_to(TEXT_ROOT)).replace("\\", "/"),
+        "audio": str(out.relative_to(AUDIO_ROOT)).replace("\\", "/"),
+        **info,
+    }
+    with PROGRESS_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def log_failure(text_file: Path, exc: Exception) -> None:
+    """Append one line per failure to a dedicated log, separate from progress."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    rel = str(text_file.relative_to(TEXT_ROOT)).replace("\\", "/")
+    with FAILURE_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(f"{_now_iso()}\t{rel}\t{type(exc).__name__}: {exc}\n")
+
+
+def mp3_duration_seconds(path: Path, char_count: int) -> tuple[float, bool]:
+    """Best-effort audio duration in seconds.
+
+    Returns (seconds, exact). Uses mutagen if installed for a real measurement;
+    otherwise estimates from character count (~340 JA chars/min) and flags it.
+    """
+    try:
+        from mutagen.mp3 import MP3
+
+        return float(MP3(str(path)).info.length), True
+    except Exception:
+        return char_count / 340.0 * 60.0, False
+
+
+# ---------------------------------------------------------------------------
 # Generation.
 # ---------------------------------------------------------------------------
 
 
-def generate_one(client, text_file: Path, cfg: dict) -> None:
+def _find_ffmpeg() -> str | None:
+    """Locate an ffmpeg binary: system PATH first, else the imageio-ffmpeg bundle.
+
+    imageio-ffmpeg ships a self-contained ffmpeg, so chunk stitching works with no
+    system install. Returns the executable path, or None if neither is available.
+    """
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def _concat_audio(chunk_bytes: list[bytes], dest: Path, cfg: dict) -> None:
+    """Stitch multiple audio chunks into `dest` using ffmpeg — never a raw byte join.
+
+    A raw byte concatenation splices two independently-encoded MP3 streams mid-frame,
+    which can leave a click/pop and corrupts seeking. Instead we hand the chunks to
+    ffmpeg's concat demuxer:
+      * primary  : -c copy  -> lossless, frame-accurate stream copy (no re-encode).
+      * fallback : decode + re-encode with libmp3lame, used only if -c copy errors
+        (e.g. mismatched stream params), per the 'decode and re-encode' alternative.
+    Either path produces a single, valid, continuous file with clean frame boundaries.
+    """
+    ffmpeg = _find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError(
+            "ffmpeg not found — required to stitch multi-chunk audio losslessly. "
+            "Install it with:  pip install imageio-ffmpeg  (bundled binary, no system "
+            "install) or add system ffmpeg to PATH."
+        )
+
+    ext = cfg["format"]
+    with tempfile.TemporaryDirectory(prefix="tts_concat_") as td:
+        tdp = Path(td)
+        parts = []
+        for i, b in enumerate(chunk_bytes):
+            part = tdp / f"part{i:03d}.{ext}"
+            part.write_bytes(b)
+            parts.append(part)
+
+        # concat-demuxer list file. Forward slashes + single quotes per its syntax.
+        listfile = tdp / "list.txt"
+        listfile.write_text(
+            "\n".join(f"file '{p.as_posix()}'" for p in parts) + "\n",
+            encoding="utf-8",
+        )
+        staged = tdp / f"out.{ext}"
+
+        base = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "concat", "-safe", "0", "-i", str(listfile)]
+        copy_cmd = base + ["-c", "copy", str(staged)]
+        res = subprocess.run(copy_cmd, capture_output=True, text=True)
+
+        if res.returncode != 0 or not staged.exists() or staged.stat().st_size == 0:
+            # Lossless copy failed — fall back to a clean decode + re-encode.
+            reencode_cmd = base + ["-c:a", "libmp3lame", "-b:a", "128k", str(staged)]
+            res = subprocess.run(reencode_cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"ffmpeg concat failed: {res.stderr.strip()}")
+
+        dest.write_bytes(staged.read_bytes())
+
+
+def generate_one(client, text_file: Path, cfg: dict) -> dict:
     out = audio_path_for(text_file)
     out.parent.mkdir(parents=True, exist_ok=True)
     text = text_file.read_text(encoding="utf-8").strip()
@@ -277,27 +410,76 @@ def generate_one(client, text_file: Path, cfg: dict) -> None:
 
     if not chunks:
         print(f"  [skip] {rel} is empty.")
-        return
+        return {}
 
     print(f"  [gen ] {rel}  ({len(text):,} chars, {len(chunks)} chunk(s)) -> "
           f"{out.relative_to(AUDIO_ROOT)}")
 
-    audio_bytes = bytearray()
+    chunk_audio: list[bytes] = []
     for idx, chunk in enumerate(chunks, 1):
         if len(chunks) > 1:
             print(f"         chunk {idx}/{len(chunks)} ({len(chunk):,} chars)...")
-        audio_bytes += _synthesize(client, chunk, cfg)
+        # Throttle before every API request (incl. across files) to dodge rate limits.
+        if cfg.get("request_delay", 0) > 0:
+            time.sleep(cfg["request_delay"])
+        chunk_audio.append(_synthesize(client, chunk, cfg))
 
-    # Write atomically: temp file then replace, so an interrupted write never
-    # leaves a half-written mp3 that the resume logic would treat as "done".
+    # Write atomically: build into a temp file then replace, so an interrupted write
+    # never leaves a half-written mp3 that the resume logic would treat as "done".
     tmp = out.with_suffix(".mp3.partial")
-    tmp.write_bytes(bytes(audio_bytes))
+    if len(chunk_audio) == 1:
+        # Single chunk: already one clean stream from the API — no stitching needed.
+        tmp.write_bytes(chunk_audio[0])
+    else:
+        # Multiple chunks: stitch with ffmpeg (lossless concat), never a byte join.
+        print(f"         stitching {len(chunk_audio)} chunks via ffmpeg...")
+        _concat_audio(chunk_audio, tmp, cfg)
     tmp.replace(out)
-    print(f"         done -> {out.relative_to(REPO_ROOT)} ({len(audio_bytes):,} bytes)")
+
+    out_bytes = out.stat().st_size
+    seconds, exact = mp3_duration_seconds(out, len(text))
+    info = {
+        "chars": len(text),
+        "chunks": len(chunks),
+        "bytes": out_bytes,
+        "duration_sec": round(seconds, 1),
+        "duration_exact": exact,
+        "stitched": len(chunk_audio) > 1,
+    }
+    log_success(text_file, out, info)
+    dur_note = f"{seconds:.1f}s" + ("" if exact else " (est.)")
+    print(f"         done -> {out.relative_to(REPO_ROOT)} "
+          f"({out_bytes:,} bytes, {dur_note})")
+    return info
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """True only for transient failures: rate limits, timeouts, conn drops, 5xx.
+
+    A 4xx client error (bad input, auth, not-found) is deterministic — retrying it
+    just wastes time and money, so those return False and fail fast.
+    """
+    try:
+        import openai
+    except ImportError:
+        return True  # can't introspect SDK types; be lenient and allow a retry
+    if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError,
+                        openai.RateLimitError, openai.InternalServerError)):
+        return True
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status == 429 or 500 <= status < 600
+    # Unknown/non-API exception (e.g. network lib): treat as transient.
+    return not isinstance(exc, openai.APIStatusError)
 
 
 def _synthesize(client, text: str, cfg: dict) -> bytes:
-    """One TTS request. Tolerates models that don't accept speed/instructions."""
+    """One TTS request, with retry/backoff on transient API failures.
+
+    Network blips, rate limits (429) and server errors (5xx) are retried with
+    exponential backoff. A TypeError means the SDK rejected a kwarg (not transient),
+    so we drop the optional params and retry once with the minimal set instead.
+    """
     kwargs = dict(
         model=cfg["model"],
         voice=cfg["voice"],
@@ -309,15 +491,37 @@ def _synthesize(client, text: str, cfg: dict) -> bytes:
     if abs(cfg["speed"] - 1.0) > 1e-6:
         kwargs["speed"] = cfg["speed"]
 
-    try:
-        resp = client.audio.speech.create(**kwargs)
-    except TypeError:
-        # Older SDK / param mismatch: retry with the minimal supported set.
-        resp = client.audio.speech.create(
-            model=cfg["model"], voice=cfg["voice"], input=text,
-            response_format=cfg["format"],
-        )
-    return resp.content
+    max_retries = cfg["max_retries"]
+    base_delay = cfg["retry_base_delay"]
+    last_exc: Exception | None = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = client.audio.speech.create(**kwargs)
+            return resp.content
+        except TypeError:
+            # Param/SDK mismatch — not transient. Strip optional kwargs and retry once.
+            resp = client.audio.speech.create(
+                model=cfg["model"], voice=cfg["voice"], input=text,
+                response_format=cfg["format"],
+            )
+            return resp.content
+        except Exception as exc:
+            last_exc = exc
+            # Only retry transient failures. A 4xx like 400 (bad input) or 401
+            # (auth) will fail identically every time — fail fast, don't burn retries.
+            if not _is_retryable(exc):
+                raise
+            if attempt == max_retries:
+                break
+            delay = base_delay * (2 ** (attempt - 1))  # 2, 4, 8, 16, ...
+            print(f"         API error (attempt {attempt}/{max_retries}): {exc} "
+                  f"-> retrying in {delay:.0f}s")
+            time.sleep(delay)
+
+    raise RuntimeError(
+        f"TTS request failed after {max_retries} attempts: {last_exc}"
+    ) from last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -388,16 +592,19 @@ def main() -> None:
             break
         except Exception as exc:  # keep going; report at the end
             print(f"  [FAIL] {text_file.relative_to(TEXT_ROOT)}: {exc}")
+            log_failure(text_file, exc)
             failed.append((text_file, exc))
 
     print("\n" + "=" * 72)
     print(f"Done. Generated {ok} file(s).", end="")
     if failed:
-        print(f"  {len(failed)} failed:")
+        print(f"  {len(failed)} failed (see {FAILURE_LOG.relative_to(REPO_ROOT)}):")
         for f, exc in failed:
             print(f"  - {f.relative_to(TEXT_ROOT)}: {exc}")
     else:
         print(" No failures.")
+    if ok:
+        print(f"Progress log: {PROGRESS_LOG.relative_to(REPO_ROOT)}")
 
 
 if __name__ == "__main__":

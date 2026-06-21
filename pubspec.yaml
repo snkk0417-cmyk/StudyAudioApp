@@ -49,6 +49,17 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+  # App launcher icon generator (branding). Build-time only.
+  flutter_launcher_icons: ^0.14.4
+
+# Launcher-icon config. Legacy square icons only (no adaptive) — the logo has fine
+# text/lines, so we avoid Android adaptive masking that would crop the edges.
+# Source art: assets/branding/Image.png (1254x1254).
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/branding/Image.png"
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
@@ -61,18 +72,61 @@ flutter:
   uses-material-design: true
 
   assets:
+    # Flutter asset directories are NON-recursive: each leaf folder containing
+    # mp3s must be listed explicitly. These 51 entries are every assets/audio/
+    # folder that contains a deep.mp3 (auto-detected). Re-run the scan and update
+    # this list when topics are added.
+    - assets/audio/architecture/accessibility_design/
+    - assets/audio/architecture/dimensional_planning/
     - assets/audio/architecture/educational_facilities/
     - assets/audio/architecture/elderly_and_medical_facilities/
+    - assets/audio/architecture/glazing_and_roofing/
+    - assets/audio/architecture/japanese_architecture_history/
     - assets/audio/architecture/library_museum_sports/
+    - assets/audio/architecture/office_and_theater/
+    - assets/audio/architecture/retail_buildings/
     - assets/audio/architecture/urban_planning/
+    - assets/audio/architecture/western_eastern_architecture_history/
+    - assets/audio/architecture/windows_and_hardware/
+    - assets/audio/construction/concrete_mix_and_quality/
+    - assets/audio/construction/concrete_placing/
+    - assets/audio/construction/concrete_types/
     - assets/audio/construction/earthwork_and_shoring/
+    - assets/audio/construction/equipment_work/
+    - assets/audio/construction/formwork/
     - assets/audio/construction/foundation_and_piling/
-    - assets/audio/construction/foundation_work/
+    - assets/audio/construction/glass_and_fittings/
+    - assets/audio/construction/interior_exterior_finishing/
+    - assets/audio/construction/plastering_and_tile/
+    - assets/audio/construction/precast_concrete/
+    - assets/audio/construction/reinforcement_work/
+    - assets/audio/construction/renovation_works/
+    - assets/audio/construction/seismic_retrofit/
+    - assets/audio/construction/site_and_ground_survey/
+    - assets/audio/construction/steel_frame_bolts/
+    - assets/audio/construction/steel_frame_erection/
+    - assets/audio/construction/steel_frame_materials/
     - assets/audio/construction/temporary_work/
+    - assets/audio/construction/terminology/
+    - assets/audio/construction/waterproofing/
+    - assets/audio/construction/wood_work/
     - assets/audio/structure/buckling_and_beam_deflection/
     - assets/audio/structure/column_base_and_seismic_design/
+    - assets/audio/structure/concrete_material/
+    - assets/audio/structure/foundation_structural_design/
+    - assets/audio/structure/ground_and_soil/
+    - assets/audio/structure/metal_materials/
+    - assets/audio/structure/other_structures/
+    - assets/audio/structure/rc_beams/
+    - assets/audio/structure/rc_columns/
+    - assets/audio/structure/rc_other/
+    - assets/audio/structure/rc_seismic_design/
+    - assets/audio/structure/rc_shear_walls/
+    - assets/audio/structure/src_structure/
     - assets/audio/structure/steel_connection/
     - assets/audio/structure/steel_material_properties/
+    - assets/audio/structure/wood_material/
+    - assets/audio/structure/wood_structure/
     - assets/text/architecture/educational_facilities/
     - assets/text/architecture/elderly_and_medical_facilities/
     - assets/text/architecture/library_museum_sports/

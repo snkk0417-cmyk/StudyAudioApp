@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:just_audio_background/just_audio_background.dart';
 
+import 'curriculum.dart';
 import 'home_screen.dart';
 
 Future<void> main() async {
@@ -17,6 +18,11 @@ Future<void> main() async {
       androidNotificationOngoing: true,
     );
   }
+
+  // Discover bundled audio (subjects/topics/types) BEFORE the first frame so the
+  // topic list is fully populated on initial build — no empty-list flash or race.
+  // HomeScreen's _bootstrap() also calls this; the _loaded guard makes it a no-op.
+  await AssetCatalog.ensureLoaded();
 
   runApp(const StudyAudioApp());
 }
