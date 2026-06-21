@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:just_audio/just_audio.dart';
@@ -5,6 +7,9 @@ import 'package:just_audio_background/just_audio_background.dart' show MediaItem
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'curriculum.dart';
+import 'services/feedback_queue_storage.dart';
+import 'services/feedback_service.dart';
+import 'services/pending_feedback_queue.dart';
 
 /// Home screen. Owns the audio engine (just_audio + just_audio_background) and
 /// persists playback position so it survives app close / kill / reboot.
@@ -21,6 +26,11 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final AudioPlayer _player = AudioPlayer();
+  final FeedbackService _feedbackService = FeedbackService();
+  late final PendingFeedbackQueue _feedbackQueue = PendingFeedbackQueue(
+    service: _feedbackService,
+    storage: SharedPreferencesFeedbackQueueStorage(),
+  );
   SharedPreferences? _prefs;
 
   // Persisted preference keys.
@@ -134,8 +144,13 @@ class _HomeScreenState extends State<HomeScreen>
     final prefs = await SharedPreferences.getInstance();
     _prefs = prefs;
 
+    // Offline-first: retry any feedback queued while offline on a previous run.
+    unawaited(_feedbackQueue.flush());
+
     _scope = prefs.getString(_kScope) ?? 'all';
     _mode = prefs.getString(_kMode) ?? 'full';
+    // Exam mode is temporarily disabled; never resume into it.
+    if (_mode == 'exam') _mode = 'full';
     _speed = prefs.getDouble(_kSpeed) ?? 1.0;
 
     final savedSubject = prefs.getString(_kSubject);
@@ -254,6 +269,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _selectMode(String mode) async {
+    // Exam mode is temporarily unavailable — ignore the tap (the segmented
+    // control snaps back since _mode is unchanged).
+    if (mode == 'exam') {
+      _showToast('Exam モードは準備中です');
+      return;
+    }
     if (_mode == mode) return;
     setState(() => _mode = mode);
     await _rebuildPlaylist();
@@ -450,6 +471,7 @@ class _HomeScreenState extends State<HomeScreen>
     _persist();
     WidgetsBinding.instance.removeObserver(this);
     _player.dispose();
+    _feedbackService.dispose();
     _pulseController.dispose();
     super.dispose();
   }
@@ -483,6 +505,257 @@ class _HomeScreenState extends State<HomeScreen>
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$m:$s';
+  }
+
+  // ── Feedback ─────────────────────────────────────────────────────────────────
+
+  /// Opens the feedback dialog. The user picks a category; lecture-linked
+  /// categories (読み間違い/内容の誤り/説明がわかりにくい) auto-attach the ACTUAL
+  /// playing-track metadata, general categories (アプリ不具合/要望) send just text.
+  Future<void> _showFeedbackDialog() async {
+    // Snapshot the ACTUAL playing track (player truth, via currentIndex) at the
+    // moment the dialog opens — NOT the browsed UI selection, which may point
+    // elsewhere while this track keeps playing.
+    final playingTrack = _currentTrack;
+    final playingPositionSeconds = _player.position.inSeconds;
+    // Playing track's duration (player truth) — used to estimate the transcript
+    // position. Nullable until the track reports its duration.
+    final playingDuration = _player.duration;
+
+    // Default category: lecture-linked when something is playing, else general.
+    final defaultCategory = kFeedbackCategories.firstWhere(
+      (c) => c.lectureLinked == (playingTrack != null),
+      orElse: () => kFeedbackCategories.first,
+    );
+    String categoryKey = defaultCategory.key;
+    final controller = TextEditingController();
+
+    final shouldSend = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setLocalState) {
+          final selectedCategory =
+              kFeedbackCategories.firstWhere((c) => c.key == categoryKey);
+
+          Widget categoryOption(FeedbackCategory c) {
+            final selected = c.key == categoryKey;
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setLocalState(() => categoryKey = c.key),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(
+                  children: [
+                    Icon(
+                      selected
+                          ? CupertinoIcons.largecircle_fill_circle
+                          : CupertinoIcons.circle,
+                      size: 20,
+                      color: selected
+                          ? CupertinoColors.activeBlue
+                          : CupertinoColors.systemGrey,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(c.labelJa,
+                          style: const TextStyle(fontSize: 14)),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          return CupertinoAlertDialog(
+            title: const Text('メモを送る'),
+            content: Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final c in kFeedbackCategories) categoryOption(c),
+                  // Lecture-linked categories show the playing-track context that
+                  // will be attached (track + timestamp), sourced from the player.
+                  if (selectedCategory.lectureLinked) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F2F7),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        playingTrack == null
+                            ? '再生中なし'
+                            : '対象: ${playingTrack.label()}\n位置: ${_fmt(Duration(seconds: playingPositionSeconds))}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: CupertinoColors.secondaryLabel,
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  CupertinoTextField(
+                    controller: controller,
+                    placeholder: 'コメントを入力',
+                    maxLines: 3,
+                    autofocus: true,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              CupertinoDialogAction(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('キャンセル'),
+              ),
+              CupertinoDialogAction(
+                isDefaultAction: true,
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('送信'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (shouldSend != true) {
+      controller.dispose();
+      return;
+    }
+    final comment = controller.text.trim();
+    controller.dispose();
+    if (comment.isEmpty) {
+      _showToast('コメントを入力してください');
+      return;
+    }
+
+    final category =
+        kFeedbackCategories.firstWhere((c) => c.key == categoryKey);
+    final Map<String, dynamic> payload;
+    if (category.lectureLinked) {
+      // Always reference the actual playing track captured at dialog open.
+      if (playingTrack == null) {
+        _showToast('再生中のトラックがありません');
+        return;
+      }
+      final excerpt = await _transcriptExcerptForTrack(
+        playingTrack,
+        playingPositionSeconds,
+        playingDuration,
+      );
+      payload = FeedbackService.lecturePayload(
+        category: category.key,
+        subject: playingTrack.subject,
+        topic: playingTrack.topic,
+        topicJp: topicLabel(playingTrack.topic),
+        contentType: playingTrack.type,
+        positionSeconds: playingPositionSeconds,
+        comment: comment,
+        transcriptExcerpt: excerpt,
+      );
+    } else {
+      payload = FeedbackService.generalPayload(
+        category: category.key,
+        comment: comment,
+      );
+    }
+
+    final result = await _feedbackQueue.submit(payload);
+    if (!mounted) return;
+    _showToast(
+      result == FeedbackResult.sent
+          ? '送信しました'
+          : 'オフラインのため保存しました。後で自動送信します',
+    );
+  }
+
+  /// Best-effort transcript excerpt for the ACTUAL playing track. Estimates the
+  /// playback fraction (position / duration), splits the source text into
+  /// blank-line-separated paragraphs, and returns the one nearest that fraction.
+  /// Returns null when the track has no bundled text. Approximate by design.
+  Future<String?> _transcriptExcerptForTrack(
+    PlaylistTrack track,
+    int positionSeconds,
+    Duration? duration,
+  ) async {
+    final text = await _loadTranscriptText(track);
+    if (text == null) return null;
+
+    final paragraphs = text
+        .split(RegExp(r'\n\s*\n'))
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (paragraphs.isEmpty) return null;
+
+    final totalMs = duration?.inMilliseconds ?? 0;
+    final ratio =
+        totalMs > 0 ? (positionSeconds * 1000 / totalMs).clamp(0.0, 1.0) : 0.0;
+    final idx =
+        (ratio * paragraphs.length).floor().clamp(0, paragraphs.length - 1);
+
+    final excerpt = paragraphs[idx];
+    const maxChars = 200;
+    return excerpt.length > maxChars
+        ? '${excerpt.substring(0, maxChars)}…'
+        : excerpt;
+  }
+
+  /// Loads (and caches) a track's transcript, sharing the on-screen text view's
+  /// cache. Returns null if the asset isn't bundled.
+  Future<String?> _loadTranscriptText(PlaylistTrack track) async {
+    final key = '${track.subject}|${track.topic}|${track.type}';
+    final cached = _textCache[key];
+    if (cached != null) return cached;
+    try {
+      final content = await rootBundle
+          .loadString(textAssetPath(track.subject, track.topic, track.type));
+      _textCache[key] = content;
+      return content;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Lightweight transient toast (Cupertino has no SnackBar). Uses the app
+  /// Overlay so it floats above the current screen and auto-dismisses.
+  void _showToast(String message) {
+    final overlay = Overlay.of(context);
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (context) => Positioned(
+        left: 24,
+        right: 24,
+        bottom: 100,
+        child: IgnorePointer(
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              decoration: BoxDecoration(
+                color: CupertinoColors.label.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: CupertinoColors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (entry.mounted) entry.remove();
+    });
   }
 
   // ── Build ────────────────────────────────────────────────────────────────────
@@ -519,7 +792,12 @@ class _HomeScreenState extends State<HomeScreen>
                     _buildSegmented<String>(
                       groupValue: _mode,
                       items: kStudyModeOrder,
-                      labelFor: (m) => kStudyModeLabels[m]!,
+                      // Exam mode is temporarily disabled (only legacy exam audio
+                      // exists). Shown as 準備中 and made non-clickable in
+                      // _selectMode; backend (kStudyModeOrder / studyModeIncludes)
+                      // is intentionally left intact for when audio is regenerated.
+                      labelFor: (m) =>
+                          m == 'exam' ? 'Exam (準備中)' : kStudyModeLabels[m]!,
                       onChanged: _selectMode,
                       fontSize: 11,
                     ),
@@ -571,7 +849,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 ),
                               ),
                               child: Text(
-                                formatLabel(topic),
+                                topicLabel(topic),
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: isSelected
@@ -613,7 +891,30 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
+            _buildFeedbackBar(),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Persistent bottom bar with the feedback entry point.
+  Widget _buildFeedbackBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+      decoration: const BoxDecoration(
+        color: CupertinoColors.white,
+        border: Border(top: BorderSide(color: Color(0xFFE5E5EA))),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: CupertinoButton.filled(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          onPressed: _showFeedbackDialog,
+          child: const Text(
+            'メモを送る',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
         ),
       ),
     );
@@ -685,7 +986,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildPlaybackStatusCard() {
     final current = _currentTrack?.label() ??
-        '${kSubjectLabels[_selectedSubject]} / ${formatLabel(_selectedTopic)} / ${contentTypeLabel(_selectedType)}';
+        '${kSubjectLabels[_selectedSubject]} / ${topicLabel(_selectedTopic)} / ${contentTypeLabel(_selectedType)}';
     final next = _nextTrack?.label() ?? 'なし（最後のトラック）';
 
     return Container(
@@ -748,7 +1049,7 @@ class _HomeScreenState extends State<HomeScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${kSubjectLabels[_selectedSubject]} / ${formatLabel(_selectedTopic)} / ${contentTypeLabel(_selectedType)}',
+            '${kSubjectLabels[_selectedSubject]} / ${topicLabel(_selectedTopic)} / ${contentTypeLabel(_selectedType)}',
             style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,

@@ -37,6 +37,8 @@ dependencies:
   just_audio_background: ^0.0.1-beta.13
   # Resume-position persistence across app close / kill / reboot.
   shared_preferences: ^2.2.0
+  # User feedback POST to the Cloudflare Worker backend (see lib/services/).
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
@@ -127,18 +129,61 @@ flutter:
     - assets/audio/structure/steel_material_properties/
     - assets/audio/structure/wood_material/
     - assets/audio/structure/wood_structure/
+    # Transcript text for ALL topics (used by the on-screen text view and by
+    # feedback transcript excerpts). Bundled for every topic that has text, so
+    # excerpts work app-wide, not just for a subset.
+    - assets/text/architecture/accessibility_design/
+    - assets/text/architecture/dimensional_planning/
     - assets/text/architecture/educational_facilities/
     - assets/text/architecture/elderly_and_medical_facilities/
+    - assets/text/architecture/glazing_and_roofing/
+    - assets/text/architecture/japanese_architecture_history/
     - assets/text/architecture/library_museum_sports/
+    - assets/text/architecture/office_and_theater/
+    - assets/text/architecture/retail_buildings/
     - assets/text/architecture/urban_planning/
+    - assets/text/architecture/western_eastern_architecture_history/
+    - assets/text/architecture/windows_and_hardware/
+    - assets/text/construction/concrete_mix_and_quality/
+    - assets/text/construction/concrete_placing/
+    - assets/text/construction/concrete_types/
     - assets/text/construction/earthwork_and_shoring/
+    - assets/text/construction/equipment_work/
+    - assets/text/construction/formwork/
     - assets/text/construction/foundation_and_piling/
     - assets/text/construction/foundation_work/
+    - assets/text/construction/glass_and_fittings/
+    - assets/text/construction/interior_exterior_finishing/
+    - assets/text/construction/plastering_and_tile/
+    - assets/text/construction/precast_concrete/
+    - assets/text/construction/reinforcement_work/
+    - assets/text/construction/renovation_works/
+    - assets/text/construction/seismic_retrofit/
+    - assets/text/construction/site_and_ground_survey/
+    - assets/text/construction/steel_frame_bolts/
+    - assets/text/construction/steel_frame_erection/
+    - assets/text/construction/steel_frame_materials/
     - assets/text/construction/temporary_work/
+    - assets/text/construction/terminology/
+    - assets/text/construction/waterproofing/
+    - assets/text/construction/wood_work/
     - assets/text/structure/buckling_and_beam_deflection/
     - assets/text/structure/column_base_and_seismic_design/
+    - assets/text/structure/concrete_material/
+    - assets/text/structure/foundation_structural_design/
+    - assets/text/structure/ground_and_soil/
+    - assets/text/structure/metal_materials/
+    - assets/text/structure/other_structures/
+    - assets/text/structure/rc_beams/
+    - assets/text/structure/rc_columns/
+    - assets/text/structure/rc_other/
+    - assets/text/structure/rc_seismic_design/
+    - assets/text/structure/rc_shear_walls/
+    - assets/text/structure/src_structure/
     - assets/text/structure/steel_connection/
     - assets/text/structure/steel_material_properties/
+    - assets/text/structure/wood_material/
+    - assets/text/structure/wood_structure/
 
   # To add custom fonts to your application, add a fonts section here,
   # in this "flutter" section. Each entry in this list should have a

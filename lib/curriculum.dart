@@ -104,6 +104,74 @@ String formatLabel(String id) => id
     .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
     .join(' ');
 
+// ── Japanese topic display names ─────────────────────────────────────────────
+//
+// UI-only label map. Internal keys (and all asset/folder paths) stay English;
+// this maps each topic key to its Japanese display name. Missing keys fall back
+// to the humanized English label via [topicLabel]. Keep keys in sync with the
+// bundled `assets/audio/<subject>/<topic>/` folders — do NOT rename folders.
+const Map<String, String> kTopicLabelsJa = {
+  // architecture
+  'accessibility_design': 'バリアフリー設計',
+  'dimensional_planning': '寸法計画',
+  'educational_facilities': '教育施設',
+  'elderly_and_medical_facilities': '高齢者・医療施設',
+  'glazing_and_roofing': 'ガラス・屋根',
+  'japanese_architecture_history': '日本建築史',
+  'library_museum_sports': '図書館・博物館・スポーツ施設',
+  'office_and_theater': '事務所・劇場',
+  'retail_buildings': '商業施設',
+  'urban_planning': '都市計画',
+  'western_eastern_architecture_history': '西洋・東洋建築史',
+  'windows_and_hardware': '窓・建具金物',
+  // construction
+  'concrete_mix_and_quality': 'コンクリートの調合・品質',
+  'concrete_placing': 'コンクリートの打込み',
+  'concrete_types': 'コンクリートの種類',
+  'earthwork_and_shoring': '土工事・山留め',
+  'equipment_work': '設備工事',
+  'formwork': '型枠工事',
+  'foundation_and_piling': '基礎・杭工事',
+  'foundation_work': '基礎工事',
+  'glass_and_fittings': 'ガラス・建具工事',
+  'interior_exterior_finishing': '内外装仕上げ',
+  'plastering_and_tile': '左官・タイル工事',
+  'precast_concrete': 'プレキャストコンクリート',
+  'reinforcement_work': '鉄筋工事',
+  'renovation_works': '改修工事',
+  'seismic_retrofit': '耐震改修',
+  'site_and_ground_survey': '敷地・地盤調査',
+  'steel_frame_bolts': '鉄骨ボルト接合',
+  'steel_frame_erection': '鉄骨建方',
+  'steel_frame_materials': '鉄骨材料',
+  'temporary_work': '仮設工事',
+  'terminology': '用語',
+  'waterproofing': '防水工事',
+  'wood_work': '木工事',
+  // structure
+  'buckling_and_beam_deflection': '座屈・梁のたわみ',
+  'column_base_and_seismic_design': '柱脚・耐震設計',
+  'concrete_material': 'コンクリート材料',
+  'foundation_structural_design': '基礎構造設計',
+  'ground_and_soil': '地盤・土質',
+  'metal_materials': '金属材料',
+  'other_structures': 'その他の構造',
+  'rc_beams': 'RC梁',
+  'rc_columns': 'RC柱',
+  'rc_other': 'RCその他',
+  'rc_seismic_design': 'RC耐震設計',
+  'rc_shear_walls': 'RC耐力壁',
+  'src_structure': 'SRC構造',
+  'steel_connection': '鉄骨接合',
+  'steel_material_properties': '鋼材の性質',
+  'wood_material': '木質材料',
+  'wood_structure': '木構造',
+};
+
+/// Japanese display name for a topic key, falling back to the humanized English
+/// label when no translation exists. Use this everywhere a topic is shown.
+String topicLabel(String topic) => kTopicLabelsJa[topic] ?? formatLabel(topic);
+
 // ── A single playable item ──────────────────────────────────────────────────
 
 class PlaylistTrack {
@@ -114,10 +182,10 @@ class PlaylistTrack {
 
   String get id => '$subject|$topic|$type';
   String get audioPath => audioAssetPath(subject, topic, type);
-  String get mediaTitle => '${formatLabel(topic)} · ${contentTypeLabel(type)}';
+  String get mediaTitle => '${topicLabel(topic)} · ${contentTypeLabel(type)}';
 
   String label() =>
-      '${kSubjectLabels[subject]} / ${formatLabel(topic)} / ${contentTypeLabel(type)}';
+      '${kSubjectLabels[subject]} / ${topicLabel(topic)} / ${contentTypeLabel(type)}';
 }
 
 // ── Runtime asset discovery ─────────────────────────────────────────────────
