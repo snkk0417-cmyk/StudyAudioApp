@@ -69,7 +69,8 @@ class FeedbackService {
 
   /// Deployed Cloudflare Worker endpoint. Replace with the real URL before
   /// release. No secret material lives here — the Worker holds the GitHub token.
-  static const String defaultEndpoint = 'https://YOUR_WORKER_URL/feedback';
+  static const String defaultEndpoint =
+      'https://studyaudioapp-feedback.snkk0417.workers.dev/feedback';
 
   static const Duration _timeout = Duration(seconds: 10);
 

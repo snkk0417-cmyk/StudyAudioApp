@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Network access for feedback submission to the Cloudflare Worker. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Background audio playback (just_audio_background / audio_service). -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>

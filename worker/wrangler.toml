@@ -1,0 +1,8 @@
+name = "studyaudioapp-feedback"
+main = "index.js"
+compatibility_date = "2026-06-22"
+
+# Public, non-secret config. The repo to file issues into.
+# GITHUB_TOKEN is NOT here — it is a secret, set via `wrangler secret put GITHUB_TOKEN`.
+[vars]
+GITHUB_REPO = "snkk0417-cmyk/StudyAudioApp"
